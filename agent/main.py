@@ -11,6 +11,7 @@ Main agent entry point. Creates a Vision Agent that:
 
 import logging
 from datetime import datetime
+import os
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -29,9 +30,13 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="MedLens AI", id="medlens-agent"),
-        instructions="Read @medlens_instructions.md",
-        # OpenRouter LLM — DeepSeek R1 (free tier) for medical guidance
-        llm=openrouter.LLM(model="deepseek/deepseek-r1:free"),
+        instructions="Read @agent/medlens_instructions.md",
+        # Mistral LLM — using Mistral API directly (bypasses OpenRouter rate limits)
+        llm=openrouter.LLM(
+            model="mistral-small-latest",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            base_url="https://api.mistral.ai/v1",
+        ),
         # ElevenLabs — natural, calm voice output for guided instructions
         tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
         # Deepgram — hands-free speech recognition with eager turn detection
