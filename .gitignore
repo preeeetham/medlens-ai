@@ -34,7 +34,6 @@ frontend/dist/
 
 # YOLO weights
 *.pt
-!yolo11n-pose.pt
 
 # Logs
 *.log
