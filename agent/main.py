@@ -316,20 +316,83 @@ async def join_call(
     agent: Agent, call_type: str, call_id: str, **kwargs
 ) -> None:
     """Handle joining a call — the agent stays active for ongoing conversation."""
+    import asyncio
+    from getstream import Stream
+
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
-        # The agent now stays alive continuously:
-        # - Gemini Realtime handles voice I/O natively
-        # - Event handlers auto-greet participants
-        # - Chat messages are responded to via Stream Chat
-        # - YOLO + Gemini analyze video continuously
-        # - agent.finish() keeps the session alive until all participants leave
-        await agent.finish()
+
+        # ---- @agent chat message watcher ----
+        async def watch_chat_for_mentions():
+            """Watch the Stream Chat channel for @agent mentions and respond."""
+            try:
+                api_key = os.getenv("STREAM_API_KEY")
+                api_secret = os.getenv("STREAM_API_SECRET")
+                chat = Stream(api_key=api_key, api_secret=api_secret)
+
+                # Track messages we've already seen
+                seen_ids = set()
+
+                while True:
+                    await asyncio.sleep(3)  # Poll every 3 seconds
+                    try:
+                        # Query recent messages from the channel
+                        response = chat.chat.query_channels(
+                            filter={"id": call_id, "type": "messaging"},
+                            limit=1,
+                        )
+                        channels = response.data.channels
+                        if not channels:
+                            continue
+
+                        messages = channels[0].messages or []
+                        for msg in messages[-5:]:  # Check last 5 messages
+                            msg_id = msg.id
+                            if msg_id in seen_ids:
+                                continue
+                            seen_ids.add(msg_id)
+
+                            # Skip agent's own messages
+                            if msg.user and msg.user.id == "medlens-agent":
+                                continue
+
+                            # Only respond to @agent mentions
+                            text = (msg.text or "").strip()
+                            if "@agent" not in text.lower():
+                                continue
+
+                            # Strip the @agent mention and respond
+                            clean_text = text.replace("@agent", "").replace("@Agent", "").strip()
+                            if not clean_text:
+                                clean_text = "The user mentioned you. Ask how you can help."
+
+                            logger.info(f"💬 @agent message: {clean_text}")
+                            await agent.simple_response(
+                                text=f"The user typed this in chat: '{clean_text}'. Respond helpfully."
+                            )
+
+                    except Exception as e:
+                        logger.debug(f"Chat poll error: {e}")
+
+            except Exception as e:
+                logger.error(f"Chat watcher failed to start: {e}")
+
+        # Start the chat watcher as a background task
+        chat_task = asyncio.create_task(watch_chat_for_mentions())
+
+        try:
+            # The agent stays alive continuously:
+            # - Gemini Realtime handles voice I/O natively
+            # - Event handlers auto-greet participants
+            # - @agent chat messages trigger responses
+            # - YOLO + Gemini analyze video continuously
+            await agent.finish()
+        finally:
+            chat_task.cancel()
 
 
 if __name__ == "__main__":
     Runner(
         AgentLauncher(create_agent=create_agent, join_call=join_call)
     ).cli()
-
