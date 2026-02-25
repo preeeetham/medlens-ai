@@ -274,23 +274,57 @@ async def create_agent(**kwargs) -> Agent:
             "message": f"CPR score: {overall_score}/10. {feedback}",
         }
 
+    # ==========================================
+    #  EVENT HANDLERS (V3 — Autonomous Behavior)
+    # ==========================================
+
+    from vision_agents.plugins.getstream.sfu_events import (
+        ParticipantJoinedEvent,
+        ParticipantLeftEvent,
+    )
+
+    @agent.events.subscribe
+    async def on_participant_joined(event: ParticipantJoinedEvent):
+        """Auto-greet when a real user joins the call."""
+        participant = event.participant
+        user_id = participant.user_id
+        if user_id == "medlens-agent":
+            return  # Don't greet ourselves
+        logger.info(f"👋 Participant joined: {user_id}")
+        await agent.simple_response(
+            text=(
+                f"A user just joined the call. "
+                "Greet them warmly, introduce yourself as MedLens AI, "
+                "and mention you can see their camera, hear them, and help with "
+                "emergency first aid, triage assessment, and CPR training. "
+                "Ask how you can help. Keep it to 2-3 sentences."
+            )
+        )
+
+    @agent.events.subscribe
+    async def on_participant_left(event: ParticipantLeftEvent):
+        """Log when a user leaves."""
+        participant = event.participant
+        if participant.user_id == "medlens-agent":
+            return
+        logger.info(f"👋 Participant left: {participant.user_id}")
+
     return agent
 
 
 async def join_call(
     agent: Agent, call_type: str, call_id: str, **kwargs
 ) -> None:
-    """Handle joining a call and starting the agent."""
+    """Handle joining a call — the agent stays active for ongoing conversation."""
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
-        await agent.simple_response(
-            text=(
-                "Introduce yourself as MedLens AI, a real-time first-aid assistant. "
-                "Mention you can help with emergencies, first-aid guidance, and CPR training. "
-                "Ask what they need help with. Keep it to 2 sentences max."
-            )
-        )
+        # The agent now stays alive continuously:
+        # - Gemini Realtime handles voice I/O natively
+        # - Event handlers auto-greet participants
+        # - Chat messages are responded to via Stream Chat
+        # - YOLO + Gemini analyze video continuously
+        # - agent.finish() keeps the session alive until all participants leave
         await agent.finish()
 
 
@@ -298,3 +332,4 @@ if __name__ == "__main__":
     Runner(
         AgentLauncher(create_agent=create_agent, join_call=join_call)
     ).cli()
+

@@ -6,16 +6,19 @@ import {
     ParticipantView,
 } from '@stream-io/video-react-sdk'
 import '@stream-io/video-react-sdk/dist/css/styles.css'
+import { StreamChat } from 'stream-chat'
 import EmergencyPanel from './EmergencyPanel'
+import ChatPanel from './ChatPanel'
 import Header from './Header'
 
 /**
  * VideoSession — the main call view after connecting.
- * Manages the Stream call lifecycle, displays video, and the side panel.
+ * Manages the Stream call lifecycle, displays video, and the side panel with chat.
  */
 export default function VideoSession({ client, callInfo, onDisconnect }) {
     const [call, setCall] = useState(null)
     const [joined, setJoined] = useState(false)
+    const [chatClient, setChatClient] = useState(null)
 
     useEffect(() => {
         const c = client.call(callInfo.callType, callInfo.callId)
@@ -29,9 +32,27 @@ export default function VideoSession({ client, callInfo, onDisconnect }) {
                 console.error('Failed to join call:', err)
             })
 
+        // Initialize Stream Chat client (same API key, same user)
+        const initChat = async () => {
+            try {
+                const chat = new StreamChat(callInfo.apiKey)
+                await chat.connectUser(
+                    { id: callInfo.userId, name: callInfo.userName || 'User' },
+                    callInfo.token
+                )
+                setChatClient(chat)
+            } catch (err) {
+                console.error('Chat connect error:', err)
+            }
+        }
+        initChat()
+
         return () => {
             c.leave().catch(() => { })
             setJoined(false)
+            if (chatClient) {
+                chatClient.disconnectUser().catch(() => { })
+            }
         }
     }, [client, callInfo])
 
@@ -39,8 +60,11 @@ export default function VideoSession({ client, callInfo, onDisconnect }) {
         if (call) {
             await call.leave()
         }
+        if (chatClient) {
+            await chatClient.disconnectUser().catch(() => { })
+        }
         onDisconnect()
-    }, [call, onDisconnect])
+    }, [call, chatClient, onDisconnect])
 
     if (!call || !joined) {
         return (
@@ -68,16 +92,20 @@ export default function VideoSession({ client, callInfo, onDisconnect }) {
 
     return (
         <StreamCall call={call}>
-            <CallUI onLeave={handleLeave} />
+            <CallUI
+                onLeave={handleLeave}
+                chatClient={chatClient}
+                channelId={callInfo.callId}
+            />
         </StreamCall>
     )
 }
 
 /**
  * CallUI — rendered inside StreamCall context.
- * Has access to call state hooks.
+ * Has access to call state hooks. Includes video, controls, triage panel, and chat.
  */
-function CallUI({ onLeave }) {
+function CallUI({ onLeave, chatClient, channelId }) {
     const call = useCall()
     const {
         useParticipants,
@@ -90,6 +118,7 @@ function CallUI({ onLeave }) {
 
     const [logs, setLogs] = useState([])
     const [triageLevel, setTriageLevel] = useState('none')
+    const [activeTab, setActiveTab] = useState('chat') // 'chat' | 'triage'
 
     const addLog = useCallback((icon, text) => {
         const time = new Date().toLocaleTimeString()
@@ -112,6 +141,7 @@ function CallUI({ onLeave }) {
     // Get local and remote participants
     const localParticipant = participants.find((p) => p.isLocalParticipant)
     const remoteParticipants = participants.filter((p) => !p.isLocalParticipant)
+    const agentConnected = remoteParticipants.length > 0
 
     const toggleCamera = () => camera.toggle()
     const toggleMic = () => microphone.toggle()
@@ -169,11 +199,35 @@ function CallUI({ onLeave }) {
                 </div>
 
                 <div className="side-panel">
-                    <EmergencyPanel
-                        triageLevel={triageLevel}
-                        logs={logs}
-                        agentConnected={remoteParticipants.length > 0}
-                    />
+                    {/* Tab switcher */}
+                    <div className="panel-tabs">
+                        <button
+                            className={`panel-tab ${activeTab === 'chat' ? 'panel-tab--active' : ''}`}
+                            onClick={() => setActiveTab('chat')}
+                        >
+                            💬 Chat
+                        </button>
+                        <button
+                            className={`panel-tab ${activeTab === 'triage' ? 'panel-tab--active' : ''}`}
+                            onClick={() => setActiveTab('triage')}
+                        >
+                            🏥 Triage
+                        </button>
+                    </div>
+
+                    {activeTab === 'chat' ? (
+                        <ChatPanel
+                            chatClient={chatClient}
+                            channelId={channelId}
+                            agentConnected={agentConnected}
+                        />
+                    ) : (
+                        <EmergencyPanel
+                            triageLevel={triageLevel}
+                            logs={logs}
+                            agentConnected={agentConnected}
+                        />
+                    )}
                 </div>
             </div>
         </>

@@ -25,7 +25,7 @@ function App() {
         token,
       })
       setClient(videoClient)
-      setCallInfo({ callId, callType: 'default' })
+      setCallInfo({ callId, callType: 'default', apiKey, userId, userName: userId, token })
       setConnectionState('connected')
     } catch (err) {
       console.error('Failed to connect:', err)
